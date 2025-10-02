@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::{
     commands::{IrcAction, IrcHandler},
-    sender::IrcResponse,
     user::User,
 };
 
@@ -12,7 +11,7 @@ pub struct Cap;
 impl IrcHandler for Cap {
     async fn handle(
         &self,
-        arguments: Vec<String>,
+        _arguments: Vec<String>,
         _authenticated: bool,
         _user_state: &mut User,
     ) -> super::IrcAction {

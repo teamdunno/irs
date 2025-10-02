@@ -111,25 +111,15 @@ impl IrcCommand {
                 user_state,
             )
             .await;
-        action.execute(writer, hostname, user_state).await;
+        action.execute(writer, hostname).await;
 
         Ok(())
     }
 }
 
 impl IrcAction {
-    pub async fn execute(
-        &self,
-        writer: &mut BufWriter<TcpStream>,
-        hostname: &str,
-        user_state: &mut User,
-    ) {
+    pub async fn execute(&self, writer: &mut BufWriter<TcpStream>, hostname: &str) {
         match self {
-            /*IrcAction::MultipleActions(actions) => {
-                for action in actions {
-                    action.execute(writer, hostname, user_state);
-                }
-            }*/
             IrcAction::SendText(msg) => {
                 msg.send(hostname, writer, false).await.unwrap();
             }
