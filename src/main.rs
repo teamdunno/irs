@@ -1,60 +1,200 @@
 use std::{
+    collections::{HashMap, HashSet},
     io::{BufRead, BufReader, BufWriter},
     net::{SocketAddr, TcpListener, TcpStream},
     str::FromStr,
+    sync::mpsc,
+    time::Duration,
 };
 
-use anyhow::Result;
-use tokio::spawn;
+use anyhow::{Result, bail};
+use once_cell::sync::Lazy;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader as TokioBufReader, BufWriter as TokioBufWriter},
+    net::TcpStream as TokioTcpStream,
+    spawn,
+    sync::{
+        Mutex,
+        broadcast::{self, Receiver, Sender},
+    },
+    time::sleep,
+};
 
-use crate::sender::IrcResponseCodes;
+use crate::{
+    login::send_motd,
+    messages::Message,
+    sender::{IrcResponse, IrcResponseCodes},
+    user::{User, UserUnwrapped},
+};
 
 mod commands;
+mod login;
+mod messages;
 mod sender;
+mod user;
+
+pub static CONNECTED_USERS: Lazy<Mutex<HashSet<UserUnwrapped>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
+pub static SENDER: Lazy<Mutex<Option<Sender<Message>>>> = Lazy::new(|| Mutex::new(None));
+
+#[allow(dead_code)]
+#[derive(Clone)]
+struct ServerInfo {
+    ip: String,
+    port: String,
+    server_hostname: String,
+    network_name: String,
+    operators: Vec<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ip = "0.0.0.0";
-    let port = "6667";
-    let server_hostname = "irc.blah.blah";
+    let info = ServerInfo {
+        ip: "0.0.0.0".into(),
+        port: "6667".into(),
+        server_hostname: "irc.blah.blah".into(),
+        network_name: "TeamDunno".into(),
+        operators: Vec::new(),
+    };
     // TODO: ^ pull these from a config file
 
-    let listener = TcpListener::bind(SocketAddr::from_str(&format!("{}:{}", ip, port))?)?;
+    let listener = TcpListener::bind(SocketAddr::from_str(&format!("{}:{}", info.ip, info.port))?)?;
+    let (tx, mut _rx) = broadcast::channel::<Message>(32);
+    let mut sender_mut = SENDER.lock().await;
+    *sender_mut = Some(tx.clone());
+    drop(sender_mut);
 
     for stream in listener.incoming() {
         let stream = stream?;
+        stream.set_nonblocking(true)?;
+        let tx_thread = tx.clone();
+        let info = info.clone();
 
-        spawn(async move { handle_connection(stream, server_hostname).await.unwrap() });
+        spawn(async move {
+            handle_connection(stream, info, /*&mut rx_thread,*/ tx_thread)
+                .await
+                .unwrap()
+        });
     }
 
     Ok(())
 }
 
-async fn handle_connection(stream: TcpStream, hostname: &str) -> Result<()> {
-    let reader_stream = stream.try_clone()?;
-    let mut reader = BufReader::new(&reader_stream);
-    let mut writer = BufWriter::new(&stream);
-    let mut buffer = String::new();
+async fn handle_connection(stream: TcpStream, info: ServerInfo, tx: Sender<Message>) -> Result<()> {
+    let stream_tcp = stream.try_clone()?;
+    let mut message_receiver = tx.clone().subscribe();
+    let mut tcp_reader = TokioBufReader::new(TokioTcpStream::from_std(stream.try_clone()?)?);
+    let mut tcp_writer = TokioBufWriter::new(TokioTcpStream::from_std(stream)?);
+    let mut state = User::default();
 
     loop {
-        buffer.clear();
-        if reader.read_line(&mut buffer).unwrap() == 0 {
-            break;
-        }
+        tokio::select! {
+            result = tcp_listener(&stream_tcp, state.clone(), &info, &mut tcp_reader) => {
+                match result {
+                    Ok(modified_user) => {
+                        state = modified_user;
+                    }
 
-        let command = commands::IrcCommand::new(buffer.clone());
-        match command.execute(&mut writer, hostname) {
-            Ok(_) => {}
-            Err(error) => {
-                let error_string = format!("error processing your command: {error:#?}\n");
-                let error = IrcResponseCodes::UnknownCommand;
-
-                error
-                    .into_irc_response("*".into(), error_string.into())
-                    .send(hostname, &mut writer)
-                    .unwrap();
-            }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            },
+            result = message_listener(&state, &mut message_receiver, &mut tcp_writer) => {
+                match result {
+                    Ok(_) => {},
+                    Err(_) => {
+                        // break;
+                    }
+                }
+            },
+            _ = sleep(Duration::from_millis(200)) => {},
         }
+    }
+
+    stream_tcp.shutdown(std::net::Shutdown::Both)?;
+
+    Ok(())
+}
+
+async fn tcp_listener(
+    stream: &TcpStream,
+    mut state: User,
+    info: &ServerInfo,
+    reader: &mut TokioBufReader<TokioTcpStream>,
+) -> Result<User> {
+    let mut buffer = String::new();
+
+    let mut writer = TokioBufWriter::new(TokioTcpStream::from_std(stream.try_clone()?)?);
+
+    buffer.clear();
+    match reader.read_line(&mut buffer).await {
+        Ok(0) => bail!("invalid response"),
+        Ok(_) => {}
+
+        Err(_) => {
+            let mut conneted_users = CONNECTED_USERS.lock().await;
+            let _ = conneted_users.remove(&state.clone().unwrap_all());
+
+            bail!("client disconnected")
+        }
+    }
+
+    let command = commands::IrcCommand::new(buffer.clone());
+    match command
+        .execute(&mut writer, &info.server_hostname, &mut state)
+        .await
+    {
+        Ok(_) => {}
+        Err(error) => {
+            let error_string = format!("error processing your command: {error:#?}\n");
+            let error = IrcResponseCodes::UnknownCommand;
+
+            error
+                .into_irc_response("*".into(), error_string.into())
+                .send(&info.server_hostname, &mut writer, true)
+                .await
+                .unwrap();
+        }
+    }
+
+    if !state.identified && state.is_populated() {
+        send_motd(info.clone(), state.clone(), &mut writer).await?;
+
+        state.identified = true;
+        CONNECTED_USERS
+            .lock()
+            .await
+            .insert(state.clone().unwrap_all());
+    }
+
+    Ok(state)
+}
+
+async fn message_listener(
+    user_wrapped: &User,
+    receiver: &mut Receiver<Message>,
+    writer: &mut TokioBufWriter<TokioTcpStream>,
+) -> Result<()> {
+    if !user_wrapped.is_populated() {
+        bail!("user has not registered yet, returning...");
+    }
+
+    let user = user_wrapped.unwrap_all();
+
+    let message: Message = receiver.recv().await.unwrap();
+    println!("{message:#?}");
+
+    if user.nickname.clone().to_ascii_lowercase() == message.receiver.to_ascii_lowercase() {
+        IrcResponse {
+            sender: Some(message.sender.hostmask()),
+            command: "PRIVMSG".into(),
+            message: message.text,
+            receiver: user.username.clone(),
+        }
+        .send("", writer, true)
+        .await
+        .unwrap();
     }
 
     Ok(())

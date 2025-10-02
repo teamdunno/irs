@@ -2,20 +2,21 @@ use async_trait::async_trait;
 
 use crate::{
     commands::{IrcAction, IrcHandler},
-    sender::IrcResponse,
     user::User,
 };
 
-pub struct Cap;
+pub struct Nick;
 
 #[async_trait]
-impl IrcHandler for Cap {
+impl IrcHandler for Nick {
     async fn handle(
         &self,
-        arguments: Vec<String>,
+        command: Vec<String>,
         _authenticated: bool,
-        _user_state: &mut User,
-    ) -> super::IrcAction {
+        user_state: &mut User,
+    ) -> IrcAction {
+        user_state.nickname = Some(command[0].clone());
+
         IrcAction::DoNothing
     }
 }
