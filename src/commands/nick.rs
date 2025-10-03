@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use tokio::sync::broadcast::Sender;
 
 use crate::{
     commands::{IrcAction, IrcHandler},
+    messages::Message,
     user::User,
 };
 
@@ -14,6 +16,7 @@ impl IrcHandler for Nick {
         command: Vec<String>,
         _authenticated: bool,
         user_state: &mut User,
+        _sender: Sender<Message>,
     ) -> IrcAction {
         user_state.nickname = Some(command[0].clone());
 

@@ -19,12 +19,14 @@ use tokio::{
 };
 
 use crate::{
+    channels::Channel,
     login::send_motd,
     messages::Message,
     sender::{IrcResponse, IrcResponseCodes},
     user::{User, UserUnwrapped},
 };
 
+mod channels;
 mod commands;
 mod login;
 mod messages;
@@ -32,6 +34,8 @@ mod sender;
 mod user;
 
 pub static CONNECTED_USERS: Lazy<Mutex<HashSet<UserUnwrapped>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
+pub static JOINED_CHANNELS: Lazy<Mutex<HashSet<Channel>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
 pub static SENDER: Lazy<Mutex<Option<Sender<Message>>>> = Lazy::new(|| Mutex::new(None));
 
@@ -178,21 +182,60 @@ async fn message_listener(
         bail!("user has not registered yet, returning...");
     }
 
-    let user = user_wrapped.unwrap_all();
-
+    let user = user_wrapped.clone().unwrap_all();
     let message: Message = receiver.recv().await.unwrap();
+    let joined_channels = JOINED_CHANNELS.lock().await;
+
+    let mut channel_name: Option<String> = None;
+
     println!("{message:#?}");
 
-    if user.nickname.clone().to_ascii_lowercase() == message.receiver.to_ascii_lowercase() {
-        IrcResponse {
-            sender: Some(message.sender.hostmask()),
-            command: "PRIVMSG".into(),
-            message: message.text,
-            receiver: user.username.clone(),
+    match message {
+        Message::PrivMessage(message) => {
+            for channel in joined_channels.clone() {
+                if channel.joined_users.contains(user_wrapped) && channel.name == message.receiver {
+                    channel_name = Some(channel.name.clone());
+                }
+            }
+
+            if user.nickname.clone().to_ascii_lowercase() == message.receiver.to_ascii_lowercase() {
+                IrcResponse {
+                    sender: Some(message.sender.hostmask()),
+                    command: "PRIVMSG".into(),
+                    arguments: Vec::new(),
+                    message: message.text,
+                    receiver: Some(user.username.clone()),
+                }
+                .send("", writer, true)
+                .await?;
+            } else if let Some(channel_name) = channel_name {
+                if message.sender != user {
+                    IrcResponse {
+                        sender: Some(message.sender.hostmask()),
+                        command: "PRIVMSG".into(),
+                        arguments: Vec::new(),
+                        message: message.text,
+                        receiver: Some(channel_name),
+                    }
+                    .send("", writer, true)
+                    .await?;
+                }
+            }
         }
-        .send("", writer, true)
-        .await
-        .unwrap();
+
+        Message::JoinMessage(message) => {
+            if message.channel.joined_users.contains(user_wrapped) || message.sender == user {
+                IrcResponse {
+                    sender: Some(message.sender.hostmask().clone()),
+                    command: "JOIN".into(),
+                    arguments: Vec::new(),
+                    message: message.channel.name.clone(),
+                    receiver: None,
+                }
+                .send("", writer, true)
+                .await?;
+            }
+        }
     }
 
     Ok(())

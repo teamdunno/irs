@@ -8,7 +8,8 @@ use tokio::{
 pub struct IrcResponse {
     pub sender: Option<String>,
     pub command: String,
-    pub receiver: String,
+    pub receiver: Option<String>,
+    pub arguments: Vec<String>,
     pub message: String,
 }
 
@@ -20,6 +21,9 @@ pub enum IrcResponseCodes {
     MyInfo,
     ISupport,
     NoMotd,
+    NoTopic,
+    NameReply,
+    EndOfNames,
 }
 
 impl IrcResponse {
@@ -29,20 +33,22 @@ impl IrcResponse {
         writer: &mut BufWriter<TcpStream>,
         prepend_column: bool,
     ) -> Result<()> {
-        let mut response = format!(
-            ":{} {} {} ",
-            self.sender.clone().unwrap_or(hostname.to_string()),
-            self.command,
-            self.receiver
-        );
+        let sender = format!(":{}", self.sender.clone().unwrap_or(hostname.to_string()));
+        let mut full_response = Vec::new();
 
+        full_response.push(sender);
+        full_response.extend_from_slice(&self.arguments);
+        full_response.push(self.command.clone());
+        if let Some(receiver) = self.receiver.clone() {
+            full_response.push(receiver);
+        }
         if prepend_column {
-            response.push_str(&format!(":{}\r\n", self.message.trim_end()));
+            full_response.push(format!(":{}\r\n", self.message.trim_end()));
         } else {
-            response.push_str(&format!("{}\r\n", self.message.trim_end()));
+            full_response.push(format!("{}\r\n", self.message.trim_end()));
         }
 
-        writer.write_all(response.as_bytes()).await?;
+        writer.write_all(full_response.join(" ").as_bytes()).await?;
         writer.flush().await?;
 
         Ok(())
@@ -58,6 +64,9 @@ impl From<IrcResponseCodes> for &str {
             IrcResponseCodes::MyInfo => "004",
             IrcResponseCodes::ISupport => "005",
             IrcResponseCodes::NoMotd => "422",
+            IrcResponseCodes::NoTopic => "331",
+            IrcResponseCodes::NameReply => "353",
+            IrcResponseCodes::EndOfNames => "366",
         }
     }
 }
@@ -73,7 +82,8 @@ impl IrcResponseCodes {
         IrcResponse {
             sender: None,
             command: (*self).into(),
-            receiver,
+            arguments: Vec::new(),
+            receiver: Some(receiver),
             message,
         }
     }

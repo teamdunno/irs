@@ -3,15 +3,21 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use tokio::{io::BufWriter, net::TcpStream};
+use tokio::{io::BufWriter, net::TcpStream, sync::broadcast::Sender};
 
 use crate::{
-    commands::{cap::Cap, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler},
+    SENDER,
+    channels::Channel,
+    commands::{
+        cap::Cap, join::Join, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler,
+    },
+    messages::Message,
     sender::IrcResponse,
     user::User,
 };
 
 mod cap;
+mod join;
 mod nick;
 mod ping;
 mod privmsg;
@@ -29,8 +35,8 @@ pub struct IrcMessage {
 }
 
 pub enum IrcAction {
-    MultipleActions(Vec<Self>),
     SendText(IrcResponse),
+    JoinChannels(Vec<Channel>),
     ErrorAuthenticateFirst,
     DoNothing,
 }
@@ -44,6 +50,7 @@ pub trait IrcHandler: Send + Sync {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
+        sender: Sender<Message>,
     ) -> IrcAction;
 }
 
@@ -89,6 +96,7 @@ impl IrcCommand {
         user_state: &mut User,
     ) -> Result<()> {
         let mut command_map: HashMap<String, &dyn IrcHandler> = HashMap::new();
+        let broadcast_sender = SENDER.lock().await.clone().unwrap();
 
         // Command map is defined here
         command_map.insert("CAP".to_owned(), &Cap);
@@ -96,6 +104,7 @@ impl IrcCommand {
         command_map.insert("USER".to_owned(), &UserHandler);
         command_map.insert("PRIVMSG".to_owned(), &PrivMsg);
         command_map.insert("PING".to_owned(), &Ping);
+        command_map.insert("JOIN".to_owned(), &Join);
 
         println!("{self:#?}");
 
@@ -109,19 +118,39 @@ impl IrcCommand {
                 self.arguments.clone(),
                 user_state.is_populated(),
                 user_state,
+                broadcast_sender,
             )
             .await;
-        action.execute(writer, hostname).await;
+        action.execute(writer, hostname, &user_state).await;
 
         Ok(())
     }
 }
 
 impl IrcAction {
-    pub async fn execute(&self, writer: &mut BufWriter<TcpStream>, hostname: &str) {
+    pub async fn execute(
+        &self,
+        writer: &mut BufWriter<TcpStream>,
+        hostname: &str,
+        user_state: &User,
+    ) {
         match self {
             IrcAction::SendText(msg) => {
                 msg.send(hostname, writer, false).await.unwrap();
+            }
+
+            IrcAction::JoinChannels(channels) => {
+                for channel in channels {
+                    channel
+                        .send_topic(user_state.clone(), writer, hostname)
+                        .await
+                        .unwrap();
+
+                    channel
+                        .names_list_send(user_state.clone(), writer, hostname)
+                        .await
+                        .unwrap();
+                }
             }
 
             _ => {}

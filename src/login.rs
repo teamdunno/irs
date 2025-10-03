@@ -26,19 +26,19 @@ pub async fn send_motd(
     );
 
     IrcResponseCodes::Welcome
-        .into_irc_response(user_info.username.clone(), welcome_text)
+        .into_irc_response(user_info.nickname.clone(), welcome_text)
         .send(&server_info.server_hostname, writer, true)
         .await?;
     IrcResponseCodes::YourHost
-        .into_irc_response(user_info.username.clone(), yourhost_text)
+        .into_irc_response(user_info.nickname.clone(), yourhost_text)
         .send(&server_info.server_hostname, writer, true)
         .await?;
     IrcResponseCodes::MyInfo
-        .into_irc_response(user_info.username.clone(), myinfo_text)
+        .into_irc_response(user_info.nickname.clone(), myinfo_text)
         .send(&server_info.server_hostname, writer, false)
         .await?;
     IrcResponseCodes::ISupport
-        .into_irc_response(user_info.username.clone(), isupport_text)
+        .into_irc_response(user_info.nickname.clone(), isupport_text)
         .send(&server_info.server_hostname, writer, false)
         .await?;
     IrcResponseCodes::NoMotd

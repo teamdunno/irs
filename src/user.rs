@@ -2,7 +2,7 @@
 
 use std::borrow::Borrow;
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct User {
     pub nickname: Option<String>,
     pub username: Option<String>,
@@ -47,7 +47,7 @@ impl UserUnwrapped {
         format!(
             "{}!~{}@{}",
             self.nickname.clone(),
-            self.realname.clone(),
+            self.username.clone(),
             "unimplement.ed"
         )
     }
