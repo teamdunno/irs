@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     net::{SocketAddr, TcpListener, TcpStream},
     str::FromStr,
-    time::Duration,
 };
 
 use anyhow::{Result, bail};
@@ -15,8 +14,8 @@ use tokio::{
         Mutex,
         broadcast::{self, Receiver, Sender},
     },
-    time::sleep,
 };
+use tracing::instrument;
 
 use crate::{
     channels::Channel,
@@ -40,7 +39,7 @@ pub static JOINED_CHANNELS: Lazy<Mutex<HashSet<Channel>>> =
 pub static SENDER: Lazy<Mutex<Option<Sender<Message>>>> = Lazy::new(|| Mutex::new(None));
 
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ServerInfo {
     ip: String,
     port: String,
@@ -51,6 +50,9 @@ struct ServerInfo {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(feature = "tokio-console")]
+    console_subscriber::init();
+
     let info = ServerInfo {
         ip: "0.0.0.0".into(),
         port: "6667".into(),
@@ -72,16 +74,15 @@ async fn main() -> Result<()> {
         let tx_thread = tx.clone();
         let info = info.clone();
 
-        spawn(async move {
-            handle_connection(stream, info, /*&mut rx_thread,*/ tx_thread)
-                .await
-                .unwrap()
-        });
+        spawn(handle_connection(
+            stream, info, /*&mut rx_thread,*/ tx_thread,
+        ));
     }
 
     Ok(())
 }
 
+#[instrument]
 async fn handle_connection(stream: TcpStream, info: ServerInfo, tx: Sender<Message>) -> Result<()> {
     let stream_tcp = stream.try_clone()?;
     let mut message_receiver = tx.clone().subscribe();
@@ -110,7 +111,6 @@ async fn handle_connection(stream: TcpStream, info: ServerInfo, tx: Sender<Messa
                     }
                 }
             },
-            _ = sleep(Duration::from_millis(200)) => {},
         }
     }
 
