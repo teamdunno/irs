@@ -1,0 +1,5 @@
+ip = "0.0.0.0"
+port = 6667
+server_hostname = "irc.foo.bar"
+network_name = "MyCoolFooNet" # this SHOULDN'T HAVE SPACES!
+operators = []

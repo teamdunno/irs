@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Error as AnyhowError;
+use clap::Parser;
 use once_cell::sync::Lazy;
 use tokio::{
     io::{AsyncBufReadExt, BufReader as TokioBufReader, BufWriter as TokioBufWriter},
@@ -21,6 +22,7 @@ use tracing::instrument;
 
 use crate::{
     channels::Channel,
+    config::ServerInfo,
     error_structs::{HandlerError, ListenerError},
     login::send_motd,
     messages::Message,
@@ -30,6 +32,7 @@ use crate::{
 
 mod channels;
 mod commands;
+mod config;
 mod error_structs;
 mod login;
 mod messages;
@@ -42,14 +45,12 @@ pub static JOINED_CHANNELS: Lazy<Mutex<HashSet<Channel>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
 pub static SENDER: Lazy<Mutex<Option<Sender<Message>>>> = Lazy::new(|| Mutex::new(None));
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-struct ServerInfo {
-    ip: String,
-    port: String,
-    server_hostname: String,
-    network_name: String,
-    operators: Vec<String>,
+/// An IRCd written in Rust
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to the config file
+    #[arg(short, long)]
+    pub config_path: Option<String>,
 }
 
 #[tokio::main]
@@ -57,13 +58,8 @@ async fn main() -> Result<(), AnyhowError> {
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
-    let info = ServerInfo {
-        ip: "0.0.0.0".into(),
-        port: "6667".into(),
-        server_hostname: "irc.blah.blah".into(),
-        network_name: "TeamDunno".into(),
-        operators: Vec::new(),
-    };
+    let args = Args::parse();
+    let info = ServerInfo::load(args.config_path).unwrap();
     // TODO: ^ pull these from a config file
 
     let listener = TcpListener::bind(SocketAddr::from_str(&format!("{}:{}", info.ip, info.port))?)?;

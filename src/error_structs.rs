@@ -27,6 +27,21 @@ pub enum CommandExecError {
     NonexistantCommand,
 }
 
+#[derive(Error, Debug)]
+pub enum ConfigReadError {
+    #[error("could not find a config file")]
+    NoConfigFile,
+
+    #[error("unsupported OS")]
+    UnsupportedOS,
+
+    #[error("std::io error")]
+    StdIoError(#[from] std::io::Error),
+
+    #[error("toml reading error")]
+    TomlError(#[from] toml::de::Error),
+}
+
 // Conversion impls here
 impl From<SenderError> for ListenerError {
     fn from(value: SenderError) -> Self {
