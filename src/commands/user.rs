@@ -1,9 +1,7 @@
 use async_trait::async_trait;
-use tokio::sync::broadcast::Sender;
 
 use crate::{
     commands::{IrcAction, IrcHandler},
-    messages::Message,
     user::User as UserState,
 };
 
@@ -16,7 +14,6 @@ impl IrcHandler for User {
         command: Vec<String>,
         _authenticated: bool,
         user_state: &mut UserState,
-        _sender: Sender<Message>,
     ) -> IrcAction {
         if command.len() < 4 {
             return IrcAction::DoNothing; // XXX: return an error

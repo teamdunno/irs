@@ -1,11 +1,9 @@
 use async_trait::async_trait;
-use tokio::sync::broadcast::Sender;
 
 use crate::{
     JOINED_CHANNELS,
     channels::Channel,
     commands::{IrcAction, IrcHandler},
-    messages::{JoinMessage, Message},
     user::User,
 };
 
@@ -18,7 +16,6 @@ impl IrcHandler for Join {
         arguments: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-        sender: Sender<Message>,
     ) -> super::IrcAction {
         let mut joined_channels = JOINED_CHANNELS.lock().await;
         let mut channels = Vec::new();
@@ -54,14 +51,6 @@ impl IrcHandler for Join {
 
                 channels.push(new_channel.clone());
             }
-        }
-
-        for channel in channels.clone() {
-            let join_message = JoinMessage {
-                sender: user_state.clone().unwrap_all(),
-                channel: channel.clone(),
-            };
-            sender.send(Message::JoinMessage(join_message)).unwrap();
         }
 
         IrcAction::JoinChannels(channels)

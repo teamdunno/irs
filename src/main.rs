@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     net::{SocketAddr, TcpListener, TcpStream},
     str::FromStr,
+    time::Duration,
 };
 
 use anyhow::Error as AnyhowError;
@@ -14,6 +15,7 @@ use tokio::{
         Mutex,
         broadcast::{self, Receiver, Sender},
     },
+    time::sleep,
 };
 use tracing::instrument;
 
@@ -96,6 +98,8 @@ async fn handle_connection(
     let mut tcp_writer = TokioBufWriter::new(TokioTcpStream::from_std(stream)?);
     let mut state = User::default();
 
+    let hostname = info.server_hostname.clone();
+
     loop {
         tokio::select! {
             result = tcp_listener(&stream_tcp, state.clone(), &info, &mut tcp_reader) => {
@@ -109,7 +113,7 @@ async fn handle_connection(
                     }
                 }
             },
-            result = message_listener(&state, &mut message_receiver, &mut tcp_writer) => {
+            result = message_listener(&state, &mut message_receiver, &mut tcp_writer, &hostname) => {
                 match result {
                     Ok(_) => {},
                     Err(err) => {
@@ -189,8 +193,11 @@ async fn message_listener(
     user_wrapped: &User,
     receiver: &mut Receiver<Message>,
     writer: &mut TokioBufWriter<TokioTcpStream>,
+    hostname: &str,
 ) -> Result<(), ListenerError> {
     if !user_wrapped.is_populated() {
+        sleep(Duration::from_millis(250)).await; // avoid immediately returns b'cuz they result in high
+        // cpu usage
         return Err(ListenerError::UserIsUnidentified);
     }
 
@@ -237,6 +244,8 @@ async fn message_listener(
 
         Message::JoinMessage(message) => {
             if message.channel.joined_users.contains(user_wrapped) || message.sender == user {
+                let channel = message.channel.clone();
+
                 IrcResponse {
                     sender: Some(message.sender.hostmask().clone()),
                     command: "JOIN".into(),
@@ -246,6 +255,16 @@ async fn message_listener(
                 }
                 .send("", writer, true)
                 .await?;
+
+                channel
+                    .send_topic(user_wrapped.clone(), writer, hostname)
+                    .await
+                    .unwrap();
+
+                channel
+                    .names_list_send(user_wrapped.clone(), &channel, writer, hostname)
+                    .await
+                    .unwrap();
             }
         }
     }

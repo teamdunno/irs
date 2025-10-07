@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use tokio::sync::broadcast::Sender;
 
 use crate::{
     CONNECTED_USERS,
@@ -17,7 +16,6 @@ impl IrcHandler for PrivMsg {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-        sender: Sender<Message>,
     ) -> IrcAction {
         if !authenticated {
             return IrcAction::ErrorAuthenticateFirst;
@@ -32,9 +30,7 @@ impl IrcHandler for PrivMsg {
             receiver: command[0].clone(),
             text: command[1].clone(),
         };
-        println!("SENDING: {message:#?}");
-        sender.send(Message::PrivMessage(message)).unwrap();
 
-        IrcAction::DoNothing
+        IrcAction::SendMessage(Message::PrivMessage(message))
     }
 }

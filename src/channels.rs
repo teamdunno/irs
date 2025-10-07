@@ -25,6 +25,7 @@ impl Channel {
     pub async fn names_list_send(
         &self,
         user: User,
+        channel: &Channel,
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
     ) -> Result<(), SenderError> {
@@ -33,6 +34,13 @@ impl Channel {
         for member in self.clone().joined_users {
             members.push(member.nickname.unwrap());
         }
+
+        for member in channel.joined_users.clone() {
+            members.push(member.nickname.unwrap());
+        }
+
+        members.sort();
+        members.dedup();
 
         IrcResponseCodes::NameReply
             .into_irc_response(

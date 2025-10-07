@@ -11,7 +11,7 @@ use crate::{
         cap::Cap, join::Join, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler,
     },
     error_structs::CommandExecError,
-    messages::Message,
+    messages::{JoinMessage, Message},
     sender::IrcResponse,
     user::User,
 };
@@ -36,6 +36,7 @@ pub struct IrcMessage {
 
 pub enum IrcAction {
     SendText(IrcResponse),
+    SendMessage(Message),
     JoinChannels(Vec<Channel>),
     ErrorAuthenticateFirst,
     DoNothing,
@@ -50,7 +51,6 @@ pub trait IrcHandler: Send + Sync {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-        sender: Sender<Message>,
     ) -> IrcAction;
 }
 
@@ -118,10 +118,11 @@ impl IrcCommand {
                 self.arguments.clone(),
                 user_state.is_populated(),
                 user_state,
-                broadcast_sender,
             )
             .await;
-        action.execute(writer, hostname, &user_state).await;
+        action
+            .execute(writer, hostname, &user_state, broadcast_sender)
+            .await;
 
         Ok(())
     }
@@ -133,6 +134,7 @@ impl IrcAction {
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
         user_state: &User,
+        sender: Sender<Message>,
     ) {
         match self {
             IrcAction::SendText(msg) => {
@@ -141,16 +143,16 @@ impl IrcAction {
 
             IrcAction::JoinChannels(channels) => {
                 for channel in channels {
-                    channel
-                        .send_topic(user_state.clone(), writer, hostname)
-                        .await
-                        .unwrap();
-
-                    channel
-                        .names_list_send(user_state.clone(), writer, hostname)
-                        .await
-                        .unwrap();
+                    let join_message = JoinMessage {
+                        sender: user_state.clone().unwrap_all(),
+                        channel: channel.clone(),
+                    };
+                    sender.send(Message::JoinMessage(join_message)).unwrap();
                 }
+            }
+
+            IrcAction::SendMessage(msg) => {
+                sender.send(msg.clone()).unwrap();
             }
 
             _ => {}

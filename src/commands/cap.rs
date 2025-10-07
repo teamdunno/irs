@@ -1,9 +1,7 @@
 use async_trait::async_trait;
-use tokio::sync::broadcast::Sender;
 
 use crate::{
     commands::{IrcAction, IrcHandler},
-    messages::Message,
     user::User,
 };
 
@@ -16,7 +14,6 @@ impl IrcHandler for Cap {
         _arguments: Vec<String>,
         _authenticated: bool,
         _user_state: &mut User,
-        _sender: Sender<Message>,
     ) -> super::IrcAction {
         IrcAction::DoNothing
     }
