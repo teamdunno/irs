@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use std::borrow::Borrow;
-
 #[derive(Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct User {
     pub nickname: Option<String>,
@@ -50,23 +48,5 @@ impl UserUnwrapped {
             self.username.clone(),
             "unimplement.ed"
         )
-    }
-}
-
-impl PartialEq<String> for UserUnwrapped {
-    fn eq(&self, other: &String) -> bool {
-        self.username == other.clone()
-    }
-}
-
-impl PartialEq<UserUnwrapped> for String {
-    fn eq(&self, other: &UserUnwrapped) -> bool {
-        self == &other.username.clone()
-    }
-}
-
-impl Borrow<String> for UserUnwrapped {
-    fn borrow(&self) -> &String {
-        &self.username
     }
 }
