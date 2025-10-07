@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
-use anyhow::Result;
 use tokio::{io::BufWriter, net::TcpStream};
 
-use crate::{sender::IrcResponseCodes, user::User};
+use crate::{error_structs::SenderError, sender::IrcResponseCodes, user::User};
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct Channel {
@@ -28,7 +27,7 @@ impl Channel {
         user: User,
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
-    ) -> Result<()> {
+    ) -> Result<(), SenderError> {
         let mut members = Vec::new();
 
         for member in self.clone().joined_users {
@@ -58,7 +57,7 @@ impl Channel {
         user: User,
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
-    ) -> Result<()> {
+    ) -> Result<(), SenderError> {
         IrcResponseCodes::NoTopic
             .into_irc_response(
                 user.nickname.clone().unwrap(),

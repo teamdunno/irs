@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::{io::BufWriter, net::TcpStream, sync::broadcast::Sender};
 
@@ -11,6 +10,7 @@ use crate::{
     commands::{
         cap::Cap, join::Join, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler,
     },
+    error_structs::CommandExecError,
     messages::Message,
     sender::IrcResponse,
     user::User,
@@ -94,7 +94,7 @@ impl IrcCommand {
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
         user_state: &mut User,
-    ) -> Result<()> {
+    ) -> Result<(), CommandExecError> {
         let mut command_map: HashMap<String, &dyn IrcHandler> = HashMap::new();
         let broadcast_sender = SENDER.lock().await.clone().unwrap();
 
@@ -111,7 +111,7 @@ impl IrcCommand {
         let command_to_execute = command_map
             .get(&self.command.to_uppercase())
             .map(|v| *v)
-            .ok_or(anyhow!("unknown command!"))?;
+            .ok_or(CommandExecError::NonexistantCommand)?;
 
         let action = command_to_execute
             .handle(

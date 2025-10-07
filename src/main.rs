@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Result, bail};
+use anyhow::Error as AnyhowError;
 use once_cell::sync::Lazy;
 use tokio::{
     io::{AsyncBufReadExt, BufReader as TokioBufReader, BufWriter as TokioBufWriter},
@@ -19,6 +19,7 @@ use tracing::instrument;
 
 use crate::{
     channels::Channel,
+    error_structs::{HandlerError, ListenerError},
     login::send_motd,
     messages::Message,
     sender::{IrcResponse, IrcResponseCodes},
@@ -27,6 +28,7 @@ use crate::{
 
 mod channels;
 mod commands;
+mod error_structs;
 mod login;
 mod messages;
 mod sender;
@@ -49,7 +51,7 @@ struct ServerInfo {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), AnyhowError> {
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
@@ -83,7 +85,11 @@ async fn main() -> Result<()> {
 }
 
 #[instrument]
-async fn handle_connection(stream: TcpStream, info: ServerInfo, tx: Sender<Message>) -> Result<()> {
+async fn handle_connection(
+    stream: TcpStream,
+    info: ServerInfo,
+    tx: Sender<Message>,
+) -> Result<(), HandlerError> {
     let stream_tcp = stream.try_clone()?;
     let mut message_receiver = tx.clone().subscribe();
     let mut tcp_reader = TokioBufReader::new(TokioTcpStream::from_std(stream.try_clone()?)?);
@@ -106,8 +112,14 @@ async fn handle_connection(stream: TcpStream, info: ServerInfo, tx: Sender<Messa
             result = message_listener(&state, &mut message_receiver, &mut tcp_writer) => {
                 match result {
                     Ok(_) => {},
-                    Err(_) => {
-                        // break;
+                    Err(err) => {
+                        match err {
+                            ListenerError::ConnectionError => {
+                                break;
+                            }
+
+                            _ => {}
+                        };
                     }
                 }
             },
@@ -124,21 +136,21 @@ async fn tcp_listener(
     mut state: User,
     info: &ServerInfo,
     reader: &mut TokioBufReader<TokioTcpStream>,
-) -> Result<User> {
+) -> Result<User, ListenerError> {
     let mut buffer = String::new();
 
     let mut writer = TokioBufWriter::new(TokioTcpStream::from_std(stream.try_clone()?)?);
 
     buffer.clear();
     match reader.read_line(&mut buffer).await {
-        Ok(0) => bail!("invalid response"),
+        Ok(0) => return Err(ListenerError::ConnectionError),
         Ok(_) => {}
 
         Err(_) => {
             let mut conneted_users = CONNECTED_USERS.lock().await;
             let _ = conneted_users.remove(&state.clone().unwrap_all());
 
-            bail!("client disconnected")
+            return Err(ListenerError::ConnectionError);
         }
     }
 
@@ -177,9 +189,9 @@ async fn message_listener(
     user_wrapped: &User,
     receiver: &mut Receiver<Message>,
     writer: &mut TokioBufWriter<TokioTcpStream>,
-) -> Result<()> {
+) -> Result<(), ListenerError> {
     if !user_wrapped.is_populated() {
-        bail!("user has not registered yet, returning...");
+        return Err(ListenerError::UserIsUnidentified);
     }
 
     let user = user_wrapped.clone().unwrap_all();

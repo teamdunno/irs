@@ -1,13 +1,12 @@
-use anyhow::Result;
 use tokio::{io::BufWriter, net::TcpStream};
 
-use crate::{ServerInfo, sender::IrcResponseCodes, user::User};
+use crate::{ServerInfo, error_structs::SenderError, sender::IrcResponseCodes, user::User};
 
 pub async fn send_motd(
     server_info: ServerInfo,
     user_info: User,
     writer: &mut BufWriter<TcpStream>,
-) -> Result<()> {
+) -> Result<(), SenderError> {
     let user_info = user_info.unwrap_all();
     let server_version = &format!("IRS-v{}", env!("CARGO_PKG_VERSION")) as &str;
 

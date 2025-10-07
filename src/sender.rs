@@ -1,8 +1,9 @@
-use anyhow::Result;
 use tokio::{
     io::{AsyncWriteExt, BufWriter},
     net::TcpStream,
 };
+
+use crate::error_structs::SenderError;
 
 #[derive(Clone)]
 pub struct IrcResponse {
@@ -32,7 +33,7 @@ impl IrcResponse {
         hostname: &str,
         writer: &mut BufWriter<TcpStream>,
         prepend_column: bool,
-    ) -> Result<()> {
+    ) -> Result<(), SenderError> {
         let sender = format!(":{}", self.sender.clone().unwrap_or(hostname.to_string()));
         let mut full_response = Vec::new();
 
