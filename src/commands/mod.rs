@@ -42,8 +42,6 @@ pub enum IrcAction {
     DoNothing,
 }
 
-pub enum DatabaseAction {}
-
 #[async_trait]
 pub trait IrcHandler: Send + Sync {
     async fn handle(
