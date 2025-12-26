@@ -192,7 +192,7 @@ async fn message_listener(
     hostname: &str,
 ) -> Result<(), ListenerError> {
     if !user_wrapped.is_populated() {
-        sleep(Duration::from_millis(250)).await; // avoid immediately returns b'cuz they result in high
+        sleep(Duration::from_millis(250)).await; // avoid immediate returns b'cuz they result in high
         // cpu usage
         return Err(ListenerError::UserIsUnidentified);
     }
