@@ -9,6 +9,7 @@ use crate::{
     channels::Channel,
     commands::{
         cap::Cap, join::Join, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler,
+        who::Who,
     },
     error_structs::CommandExecError,
     messages::{JoinMessage, Message},
@@ -22,6 +23,7 @@ mod nick;
 mod ping;
 mod privmsg;
 mod user;
+mod who;
 
 #[derive(Debug)]
 pub struct IrcCommand {
@@ -103,6 +105,7 @@ impl IrcCommand {
         command_map.insert("PRIVMSG".to_owned(), &PrivMsg);
         command_map.insert("PING".to_owned(), &Ping);
         command_map.insert("JOIN".to_owned(), &Join);
+        command_map.insert("WHO".to_owned(), &Who);
 
         println!("{self:#?}");
 
