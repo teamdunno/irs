@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 
 use crate::{
-    CONNECTED_USERS,
     commands::{IrcAction, IrcHandler},
-    messages::{Message, PrivMessage},
+    messages::{Message, PrivMessage, Receiver},
     user::User,
 };
 
@@ -16,21 +15,26 @@ impl IrcHandler for PrivMsg {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-    ) -> IrcAction {
+        _server_outgoing_password: String,
+        _server_incoming_passwords: Vec<String>,
+        _user_passwords: Vec<String>,
+    ) -> Vec<IrcAction> {
         if !authenticated {
-            return IrcAction::ErrorAuthenticateFirst;
+            return vec![IrcAction::ErrorAuthenticateFirst];
         }
-        let connected_users = CONNECTED_USERS.lock().await;
 
-        println!("{connected_users:#?}");
-        drop(connected_users);
+        let receiver = if command[0].clone().starts_with("#") {
+            Receiver::ChannelName(command[0].clone())
+        } else {
+            Receiver::Username(command[0].clone())
+        };
 
         let message = PrivMessage {
             sender: user_state.clone().unwrap_all(),
-            receiver: command[0].clone(),
+            receiver,
             text: command[1].clone(),
         };
 
-        IrcAction::SendMessage(Message::PrivMessage(message))
+        vec![IrcAction::SendMessage(Message::PrivMessage(message))]
     }
 }

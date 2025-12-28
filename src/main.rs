@@ -1,8 +1,9 @@
 use std::{
+    clone,
     collections::HashSet,
     net::{SocketAddr, TcpListener, TcpStream},
     str::FromStr,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::Error as AnyhowError;
@@ -25,8 +26,13 @@ use crate::{
     config::ServerInfo,
     error_structs::{HandlerError, ListenerError},
     login::send_motd,
-    messages::Message,
+    messages::Receiver as MsgReceiver,
+    messages::{Message, NetJoinMessage},
     sender::{IrcResponse, IrcResponseCodes},
+    ts6::{
+        Ts6,
+        structs::{ServerId, UserId},
+    },
     user::{User, UserUnwrapped},
 };
 
@@ -37,9 +43,14 @@ mod error_structs;
 mod login;
 mod messages;
 mod sender;
+mod ts6;
 mod user;
+mod userid_gen;
+mod usermodes;
 
 pub static CONNECTED_USERS: Lazy<Mutex<HashSet<UserUnwrapped>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
+pub static FOREIGN_CONNECTED_USERS: Lazy<Mutex<HashSet<UserUnwrapped>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
 pub static JOINED_CHANNELS: Lazy<Mutex<HashSet<Channel>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
@@ -51,6 +62,11 @@ struct Args {
     /// Path to the config file
     #[arg(short, long)]
     pub config_path: Option<String>,
+}
+
+enum TcpListenerResult {
+    UpdatedUser(User),
+    ServerConnectionInit,
 }
 
 #[tokio::main]
@@ -92,37 +108,79 @@ async fn handle_connection(
     let mut message_receiver = tx.clone().subscribe();
     let mut tcp_reader = TokioBufReader::new(TokioTcpStream::from_std(stream.try_clone()?)?);
     let mut tcp_writer = TokioBufWriter::new(TokioTcpStream::from_std(stream)?);
-    let mut state = User::default();
 
-    let hostname = info.server_hostname.clone();
+    'connection_handler: {
+        let mut state = User::default();
 
-    loop {
-        tokio::select! {
-            result = tcp_listener(&stream_tcp, state.clone(), &info, &mut tcp_reader) => {
-                match result {
-                    Ok(modified_user) => {
-                        state = modified_user;
-                    }
+        let hostname = info.server_hostname.clone();
 
-                    Err(_) => {
-                        break;
-                    }
-                }
-            },
-            result = message_listener(&state, &mut message_receiver, &mut tcp_writer, &hostname) => {
-                match result {
-                    Ok(_) => {},
-                    Err(err) => {
-                        match err {
-                            ListenerError::ConnectionError => {
-                                break;
+        // TODO: generate randomally and allow overriding from config
+        let my_server_id = ServerId::try_from("000".to_owned()).unwrap();
+
+        loop {
+            tokio::select! {
+                result = tcp_listener(&stream_tcp, state.clone(), &info, &mut tcp_reader, my_server_id.clone()) => {
+                    match result {
+                        Ok(tcp_listener_result) => {
+                            match tcp_listener_result {
+                                TcpListenerResult::UpdatedUser(user) => {
+                                    state = user;
+                                }
+
+                                TcpListenerResult::ServerConnectionInit => {
+                                    break;
+                                }
                             }
+                        }
 
-                            _ => {}
-                        };
+                        Err(_) => {
+                            break 'connection_handler;
+                        }
                     }
-                }
-            },
+                },
+                result = message_listener(&state, &mut message_receiver, &mut tcp_writer, &hostname) => {
+                    match result {
+                        Ok(_) => {},
+                        Err(err) => {
+                            match err {
+                                ListenerError::ConnectionError => {
+                                    break 'connection_handler;
+                                }
+
+                                _ => {}
+                            };
+                        }
+                    }
+                },
+            }
+        }
+
+        println!("upgrade to server connection");
+
+        let mut ts6_server_status = Ts6::default();
+
+        loop {
+            tokio::select! {
+                result = ts6_server_status.tcp_listener(&stream_tcp, &info, &mut tcp_reader, &my_server_id) => {
+                    match result {
+                        Ok(new_status) => {
+                            println!("{new_status:#?}");
+                            ts6_server_status = new_status;
+                        },
+                        Err(_) => {
+                            break;
+                        }
+                    }
+                },
+                result = ts6_server_status.message_listener(&mut message_receiver, &mut tcp_writer, &my_server_id, &hostname) => {
+                    match result {
+                        Ok(_) => {},
+                        Err(_) => {
+                            break;
+                        }
+                    }
+                },
+            }
         }
     }
 
@@ -133,56 +191,89 @@ async fn handle_connection(
 
 async fn tcp_listener(
     stream: &TcpStream,
-    mut state: User,
+    mut user_state: User,
     info: &ServerInfo,
     reader: &mut TokioBufReader<TokioTcpStream>,
-) -> Result<User, ListenerError> {
+    our_sid: ServerId,
+) -> Result<TcpListenerResult, ListenerError> {
     let mut buffer = String::new();
 
     let mut writer = TokioBufWriter::new(TokioTcpStream::from_std(stream.try_clone()?)?);
 
-    buffer.clear();
     match reader.read_line(&mut buffer).await {
         Ok(0) => return Err(ListenerError::ConnectionError),
         Ok(_) => {}
 
         Err(_) => {
             let mut conneted_users = CONNECTED_USERS.lock().await;
-            let _ = conneted_users.remove(&state.clone().unwrap_all());
+            let _ = conneted_users.remove(&user_state.clone().unwrap_all());
 
             return Err(ListenerError::ConnectionError);
         }
     }
 
-    let command = commands::IrcCommand::new(buffer.clone());
+    let command = commands::IrcCommand::new(buffer.clone()).await;
     match command
-        .execute(&mut writer, &info.server_hostname, &mut state)
+        .execute(&mut writer, &info.server_hostname, &mut user_state, info)
         .await
     {
-        Ok(_) => {}
-        Err(error) => {
-            let error_string = format!("error processing your command: {error:#?}\n");
-            let error = IrcResponseCodes::UnknownCommand;
+        Ok(return_actions) => {
+            for return_action in return_actions {
+                match return_action {
+                    commands::ReturnAction::ServerConn => {
+                        return Ok(TcpListenerResult::ServerConnectionInit);
+                    }
 
-            error
-                .into_irc_response("*".into(), error_string.into())
-                .send(&info.server_hostname, &mut writer, true)
-                .await
-                .unwrap();
+                    _ => {}
+                }
+            }
         }
+        Err(error) => match error {
+            error_structs::CommandExecError::NonexistantCommand => {
+                let error_string = format!("error processing your command: {error:#?}\n");
+                let error = IrcResponseCodes::UnknownCommand;
+
+                error
+                    .into_irc_response("*".into(), error_string.into())
+                    .send(&info.server_hostname, &mut writer, true)
+                    .await
+                    .unwrap();
+            }
+        },
     }
 
-    if !state.identified && state.is_populated() {
-        send_motd(info.clone(), state.clone(), &mut writer).await?;
+    if !user_state.identified && user_state.is_populated_without_uid() {
+        let id = userid_gen::increase_user_id()
+            .await
+            .unwrap()
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>()
+            .join("");
+        let user_id = format!("{our_sid}{id}");
 
-        state.identified = true;
+        user_state.identified = true;
+        user_state.user_id = Some(UserId::try_from(user_id).unwrap()); // XXX: error handling
+        user_state.timestamp = Some(SystemTime::now());
+
+        send_motd(info.clone(), user_state.clone(), &mut writer).await?;
+
+        let broadcast_sender = SENDER.lock().await.clone().unwrap();
+
+        broadcast_sender
+            .send(Message::NetJoinMessage(NetJoinMessage {
+                user: user_state.clone().unwrap_all(),
+                server_id: our_sid.clone(),
+            }))
+            .unwrap();
+
         CONNECTED_USERS
             .lock()
             .await
-            .insert(state.clone().unwrap_all());
+            .insert(user_state.clone().unwrap_all());
     }
 
-    Ok(state)
+    Ok(TcpListenerResult::UpdatedUser(user_state))
 }
 
 async fn message_listener(
@@ -208,12 +299,32 @@ async fn message_listener(
     match message {
         Message::PrivMessage(message) => {
             for channel in joined_channels.clone() {
-                if channel.joined_users.contains(user_wrapped) && channel.name == message.receiver {
+                if let MsgReceiver::ChannelName(channelname) = message.clone().receiver
+                    && channelname == channel.name
+                    && channel.joined_users.contains(user_wrapped)
+                {
                     channel_name = Some(channel.name.clone());
                 }
             }
 
-            if user.nickname.clone().to_ascii_lowercase() == message.receiver.to_ascii_lowercase() {
+            dbg!(&message);
+
+            if match message.clone().receiver {
+                MsgReceiver::UserId(userid) => {
+                    println!("{userid} ?= {}", user.user_id);
+                    if userid == user.user_id { true } else { false }
+                }
+
+                MsgReceiver::Username(username) => {
+                    if username.to_lowercase() == user.username.to_lowercase() {
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                _ => false,
+            } {
                 IrcResponse {
                     sender: Some(message.sender.hostmask()),
                     command: "PRIVMSG".into(),
@@ -238,7 +349,7 @@ async fn message_listener(
             }
         }
 
-        Message::JoinMessage(message) => {
+        Message::ChanJoinMessage(message) => {
             if message.channel.joined_users.contains(user_wrapped) || message.sender == user {
                 let channel = message.channel.clone();
 
@@ -263,7 +374,35 @@ async fn message_listener(
                     .unwrap();
             }
         }
+
+        Message::NetJoinMessage(_) => {} // we don't care about these here :)
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::userid_gen;
+
+    #[tokio::test]
+    async fn test_user_id_generator() {
+        while let Ok(userid) = userid_gen::increase_user_id().await {
+            if userid == ['A', 'B', 'C', 'D', 'E', 'F'] {
+                userid_gen::manually_set_user_id(['Z', 'Z', 'Z', 'Z', 'Z', 'Y'].to_vec()).await;
+                break;
+            }
+
+            dbg!(userid);
+        }
+
+        while let Ok(userid) = userid_gen::increase_user_id().await {
+            if userid == ['A', '1', '2', '3', '4', '5'] {
+                // ff a bit
+                userid_gen::manually_set_user_id(['Z', '1', '2', '3', '4', '5'].to_vec()).await;
+            }
+
+            dbg!(userid);
+        }
+    }
 }

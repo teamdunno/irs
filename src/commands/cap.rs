@@ -14,7 +14,10 @@ impl IrcHandler for Cap {
         _arguments: Vec<String>,
         _authenticated: bool,
         _user_state: &mut User,
-    ) -> super::IrcAction {
-        IrcAction::DoNothing
+        _server_outgoing_password: String,
+        _server_incoming_passwords: Vec<String>,
+        _user_passwords: Vec<String>,
+    ) -> Vec<super::IrcAction> {
+        vec![IrcAction::DoNothing]
     }
 }

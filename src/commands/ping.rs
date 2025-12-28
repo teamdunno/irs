@@ -15,17 +15,20 @@ impl IrcHandler for Ping {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-    ) -> IrcAction {
+        _server_outgoing_password: String,
+        _server_incoming_passwords: Vec<String>,
+        _user_passwords: Vec<String>,
+    ) -> Vec<IrcAction> {
         if authenticated {
-            IrcAction::SendText(IrcResponse {
+            vec![IrcAction::SendText(IrcResponse {
                 sender: None,
                 command: "PONG".into(),
                 arguments: Vec::new(),
                 receiver: Some(user_state.username.clone().unwrap()),
                 message: format!(":{}", command[0].clone()),
-            })
+            })]
         } else {
-            IrcAction::DoNothing
+            vec![IrcAction::DoNothing]
         }
     }
 }

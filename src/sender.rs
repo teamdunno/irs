@@ -5,7 +5,7 @@ use tokio::{
 
 use crate::error_structs::SenderError;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IrcResponse {
     pub sender: Option<String>,
     pub command: String,
@@ -15,16 +15,17 @@ pub struct IrcResponse {
 }
 
 #[derive(Clone, Copy)]
+#[repr(u16)]
 pub enum IrcResponseCodes {
-    UnknownCommand,
-    Welcome,
-    YourHost,
-    MyInfo,
-    ISupport,
-    NoMotd,
-    NoTopic,
-    NameReply,
-    EndOfNames,
+    UnknownCommand = 421,
+    Welcome = 001,
+    YourHost = 002,
+    MyInfo = 004,
+    ISupport = 005,
+    NoMotd = 422,
+    NoTopic = 331,
+    NameReply = 353,
+    EndOfNames = 366,
 }
 
 impl IrcResponse {
@@ -38,8 +39,8 @@ impl IrcResponse {
         let mut full_response = Vec::new();
 
         full_response.push(sender);
-        full_response.extend_from_slice(&self.arguments);
         full_response.push(self.command.clone());
+        full_response.extend_from_slice(&self.arguments);
         if let Some(receiver) = self.receiver.clone() {
             full_response.push(receiver);
         }
@@ -52,29 +53,17 @@ impl IrcResponse {
         writer.write_all(full_response.join(" ").as_bytes()).await?;
         writer.flush().await?;
 
-        Ok(())
-    }
-}
+        println!("sending: {full_response:#?}");
 
-impl From<IrcResponseCodes> for &str {
-    fn from(value: IrcResponseCodes) -> Self {
-        match value {
-            IrcResponseCodes::UnknownCommand => "421",
-            IrcResponseCodes::Welcome => "001",
-            IrcResponseCodes::YourHost => "002",
-            IrcResponseCodes::MyInfo => "004",
-            IrcResponseCodes::ISupport => "005",
-            IrcResponseCodes::NoMotd => "422",
-            IrcResponseCodes::NoTopic => "331",
-            IrcResponseCodes::NameReply => "353",
-            IrcResponseCodes::EndOfNames => "366",
-        }
+        Ok(())
     }
 }
 
 impl From<IrcResponseCodes> for String {
     fn from(value: IrcResponseCodes) -> Self {
-        Into::<&str>::into(value).to_string()
+        let value = value as u16;
+
+        value.to_string()
     }
 }
 
