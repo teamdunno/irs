@@ -14,7 +14,10 @@ impl IrcHandler for Who {
         _arguments: Vec<String>,
         _authenticated: bool,
         _user_state: &mut User,
-    ) -> super::IrcAction {
-        IrcAction::DoNothing // TODO
+        server_outgoing_password: String,
+        server_incoming_passwords: Vec<String>,
+        user_passwords: Vec<String>,
+    ) -> Vec<super::IrcAction> {
+        vec![IrcAction::DoNothing] // TODO
     }
 }

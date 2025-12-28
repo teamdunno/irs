@@ -14,9 +14,12 @@ impl IrcHandler for Nick {
         command: Vec<String>,
         _authenticated: bool,
         user_state: &mut User,
-    ) -> IrcAction {
+        server_outgoing_password: String,
+        server_incoming_passwords: Vec<String>,
+        user_passwords: Vec<String>,
+    ) -> Vec<IrcAction> {
         user_state.nickname = Some(command[0].clone());
 
-        IrcAction::DoNothing
+        vec![IrcAction::DoNothing]
     }
 }

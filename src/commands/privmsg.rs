@@ -16,9 +16,12 @@ impl IrcHandler for PrivMsg {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-    ) -> IrcAction {
+        server_outgoing_password: String,
+        server_incoming_passwords: Vec<String>,
+        user_passwords: Vec<String>,
+    ) -> Vec<IrcAction> {
         if !authenticated {
-            return IrcAction::ErrorAuthenticateFirst;
+            return vec![IrcAction::ErrorAuthenticateFirst];
         }
         let connected_users = CONNECTED_USERS.lock().await;
 
@@ -31,6 +34,6 @@ impl IrcHandler for PrivMsg {
             text: command[1].clone(),
         };
 
-        IrcAction::SendMessage(Message::PrivMessage(message))
+        vec![IrcAction::SendMessage(Message::PrivMessage(message))]
     }
 }

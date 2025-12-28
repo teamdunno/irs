@@ -14,13 +14,16 @@ impl IrcHandler for User {
         command: Vec<String>,
         _authenticated: bool,
         user_state: &mut UserState,
-    ) -> IrcAction {
+        server_outgoing_password: String,
+        server_incoming_passwords: Vec<String>,
+        user_passwords: Vec<String>,
+    ) -> Vec<IrcAction> {
         if command.len() < 4 {
-            return IrcAction::DoNothing; // XXX: return an error
+            return vec![IrcAction::DoNothing]; // XXX: return an error
         }
         user_state.username = Some(command[0].clone());
         user_state.realname = Some(command[3].clone());
 
-        IrcAction::DoNothing
+        vec![IrcAction::DoNothing]
     }
 }

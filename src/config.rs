@@ -11,6 +11,8 @@ pub struct ServerInfo {
     pub server_hostname: String,
     pub network_name: String,
     pub operators: Vec<String>,
+    pub server_incoming_passwords: Vec<String>,
+    pub server_outgoing_password: String,
 }
 
 fn get_config_path() -> Result<PathBuf, ConfigReadError> {

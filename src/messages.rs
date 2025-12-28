@@ -1,16 +1,24 @@
-use crate::{channels::Channel, user::UserUnwrapped};
+use crate::{channels::Channel, ts6::structs::ServerId, user::UserUnwrapped};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     PrivMessage(PrivMessage),
-    JoinMessage(JoinMessage),
+    ChanJoinMessage(ChanJoinMessage),
+    NetJoinMessage(NetJoinMessage),
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct JoinMessage {
+pub struct ChanJoinMessage {
     pub sender: UserUnwrapped,
     pub channel: Channel,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct NetJoinMessage {
+    pub user: UserUnwrapped,
+    pub server_id: ServerId,
 }
 
 #[allow(dead_code)]

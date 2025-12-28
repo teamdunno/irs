@@ -3,3 +3,5 @@ port = 6667
 server_hostname = "irc.foo.bar"
 network_name = "MyCoolFooNet" # this SHOULDN'T HAVE SPACES!
 operators = []
+server_incoming_passwords = ["unimpl"]
+server_outgoing_password = "root"

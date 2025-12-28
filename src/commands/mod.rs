@@ -8,11 +8,12 @@ use crate::{
     SENDER,
     channels::Channel,
     commands::{
-        cap::Cap, join::Join, nick::Nick, ping::Ping, privmsg::PrivMsg, user::User as UserHandler,
-        who::Who,
+        cap::Cap, join::Join, nick::Nick, pass::Pass, ping::Ping, privmsg::PrivMsg,
+        user::User as UserHandler, who::Who,
     },
+    config::ServerInfo,
     error_structs::CommandExecError,
-    messages::{JoinMessage, Message},
+    messages::{ChanJoinMessage, Message},
     sender::IrcResponse,
     user::User,
 };
@@ -20,6 +21,7 @@ use crate::{
 mod cap;
 mod join;
 mod nick;
+mod pass;
 mod ping;
 mod privmsg;
 mod user;
@@ -40,8 +42,15 @@ pub enum IrcAction {
     SendText(IrcResponse),
     SendMessage(Message),
     JoinChannels(Vec<Channel>),
+    UpgradeToServerConn,
     ErrorAuthenticateFirst,
     DoNothing,
+}
+
+pub enum ReturnAction {
+    Nothing,
+    ServerConn,
+    CloseConn,
 }
 
 #[async_trait]
@@ -51,17 +60,25 @@ pub trait IrcHandler: Send + Sync {
         command: Vec<String>,
         authenticated: bool,
         user_state: &mut User,
-    ) -> IrcAction;
+        server_outgoing_password: String,
+        server_incoming_passwords: Vec<String>,
+        user_passwords: Vec<String>,
+    ) -> Vec<IrcAction>;
 }
 
 pub struct SendMessage(Option<String>);
 
 impl IrcCommand {
-    pub fn new(command_with_arguments: String) -> Self {
-        let split_command: Vec<&str> = command_with_arguments
+    pub async fn new(command_with_arguments: String) -> Self {
+        let mut split_command: Vec<&str> = command_with_arguments
             .split_whitespace()
             .into_iter()
             .collect();
+
+        if split_command[0].starts_with(":") {
+            split_command.remove(0);
+        }
+
         let command = split_command[0].to_owned();
         let mut arguments = Vec::new();
         let mut buffer: Option<String> = None;
@@ -94,7 +111,8 @@ impl IrcCommand {
         writer: &mut BufWriter<TcpStream>,
         hostname: &str,
         user_state: &mut User,
-    ) -> Result<(), CommandExecError> {
+        config: &ServerInfo,
+    ) -> Result<Vec<ReturnAction>, CommandExecError> {
         let mut command_map: HashMap<String, &dyn IrcHandler> = HashMap::new();
         let broadcast_sender = SENDER.lock().await.clone().unwrap();
 
@@ -106,6 +124,7 @@ impl IrcCommand {
         command_map.insert("PING".to_owned(), &Ping);
         command_map.insert("JOIN".to_owned(), &Join);
         command_map.insert("WHO".to_owned(), &Who);
+        command_map.insert("PASS".to_owned(), &Pass);
 
         println!("{self:#?}");
 
@@ -114,18 +133,28 @@ impl IrcCommand {
             .map(|v| *v)
             .ok_or(CommandExecError::NonexistantCommand)?;
 
-        let action = command_to_execute
+        let actions = command_to_execute
             .handle(
                 self.arguments.clone(),
                 user_state.is_populated(),
                 user_state,
+                config.server_outgoing_password.clone(),
+                config.server_incoming_passwords.clone(),
+                vec![], // TODO
             )
             .await;
-        action
-            .execute(writer, hostname, &user_state, broadcast_sender)
-            .await;
 
-        Ok(())
+        let mut return_actions = Vec::new();
+
+        for action in actions {
+            let return_action = action
+                .execute(writer, hostname, &user_state, broadcast_sender.clone())
+                .await;
+
+            return_actions.push(return_action);
+        }
+
+        Ok(return_actions)
     }
 }
 
@@ -136,7 +165,7 @@ impl IrcAction {
         hostname: &str,
         user_state: &User,
         sender: Sender<Message>,
-    ) {
+    ) -> ReturnAction {
         match self {
             IrcAction::SendText(msg) => {
                 msg.send(hostname, writer, false).await.unwrap();
@@ -144,11 +173,11 @@ impl IrcAction {
 
             IrcAction::JoinChannels(channels) => {
                 for channel in channels {
-                    let join_message = JoinMessage {
+                    let join_message = ChanJoinMessage {
                         sender: user_state.clone().unwrap_all(),
                         channel: channel.clone(),
                     };
-                    sender.send(Message::JoinMessage(join_message)).unwrap();
+                    sender.send(Message::ChanJoinMessage(join_message)).unwrap();
                 }
             }
 
@@ -156,7 +185,13 @@ impl IrcAction {
                 sender.send(msg.clone()).unwrap();
             }
 
+            IrcAction::UpgradeToServerConn => {
+                return ReturnAction::ServerConn;
+            }
+
             _ => {}
         }
+
+        return ReturnAction::Nothing;
     }
 }
